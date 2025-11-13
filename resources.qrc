@@ -1,0 +1,10 @@
+<!DOCTYPE RCC>
+<RCC version="1.0">
+    <qresource prefix="/qml">
+        <file alias="main.qml">src/resources/qml/main.qml</file>
+    </qresource>
+    <qresource prefix="/shaders">
+        <file alias="vertex.vert">src/resources/shaders/vertex.vert</file>
+        <file alias="fragment.frag">src/resources/shaders/fragment.frag</file>
+    </qresource>
+</RCC>
