@@ -1,14 +1,16 @@
 #include "VideoRenderer.h"
 #include "VideoDecoder.h"
+#include "libavutil/frame.h"
 #include <QQuickFramebufferObject>
 #include <QOpenGLFramebufferObject>
 #include <QOpenGLShaderProgram>
-#include <QOpenGLFunctions>
+#include <QOpenGLFunctions_3_3_Core>
 #include <QOpenGLTexture>
 #include <QDebug>
 #include <QObject>
 #include <QString>
 #include <QFile>
+#include <gl/gl.h>
 
 extern "C" {
 #include <libavformat/avformat.h>
@@ -25,16 +27,167 @@ static QString loadShader(const QString& path) {
     return file.readAll();
 }
 
+class GLVideoRenderer : protected QOpenGLFunctions_3_3_Core {
+public:
+    GLVideoRenderer();
+    ~GLVideoRenderer();
+
+    void initialize();
+    void updateTextures(AVFrame* frame);
+    void render();
+
+private:
+    bool initialized_;
+    GLuint textureY_;
+    GLuint textureU_;
+    GLuint textureV_;
+    GLuint shaderProgram_;
+    GLuint vbo_;
+    GLuint vao_;
+};
+
+GLVideoRenderer::GLVideoRenderer()
+    : initialized_(false)
+    , textureY_(0)
+    , textureU_(0)
+    , textureV_(0)
+    , shaderProgram_(0)
+    , vbo_(0)
+    , vao_(0)
+{
+}
+
+GLVideoRenderer::~GLVideoRenderer() {
+    if (textureY_) glDeleteTextures(1, &textureY_);
+    if (textureU_) glDeleteTextures(1, &textureU_);
+    if (textureV_) glDeleteTextures(1, &textureV_);
+    if (shaderProgram_) glDeleteProgram(shaderProgram_);
+    if (vbo_) glDeleteBuffers(1, &vbo_);
+    if (vao_) glDeleteVertexArrays(1, &vao_);
+}
+
+void GLVideoRenderer::initialize() {
+    if (initialized_) return;
+    initializeOpenGLFunctions();
+
+    QString vertexShaderSource = loadShader(":/shaders/vertex.vert");
+    QString fragmentShaderSource = loadShader(":/shaders/fragment.frag");
+    
+    if (vertexShaderSource.isEmpty() || fragmentShaderSource.isEmpty()) {
+        qCritical() << "Failed to load shader files";
+        return;
+    }
+    
+    // Compile shaders
+    GLuint vertexShader = glCreateShader(GL_VERTEX_SHADER);
+    QByteArray vertexBytes = vertexShaderSource.toUtf8();
+    const char* vertexData = vertexBytes.constData();
+    glShaderSource(vertexShader, 1, &vertexData, nullptr);
+    glCompileShader(vertexShader);
+    
+    GLuint fragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
+    QByteArray fragmentBytes = fragmentShaderSource.toUtf8();
+    const char* fragmentData = fragmentBytes.constData();
+    glShaderSource(fragmentShader, 1, &fragmentData, nullptr);
+    glCompileShader(fragmentShader);
+
+    shaderProgram_ = glCreateProgram();
+    glAttachShader(shaderProgram_, vertexShader);
+    glAttachShader(shaderProgram_, fragmentShader);
+    glLinkProgram(shaderProgram_);
+
+    glDeleteShader(vertexShader);
+    glDeleteShader(fragmentShader);
+
+    float vertices[] = {
+        1.0f, 1.0f, 0.0f, 1.0f, 0.0f,
+        1.0f, -1.0f, 0.0f, 1.0f, 1.0f,
+        -1.0f, -1.0f, 0.0f, 0.0f, 1.0f,
+        -1.0f, 1.0f, 0.0f, 0.0f, 0.0f,
+    };
+
+    // Create VAO and VBO, and set up vertex attributes once
+    glGenVertexArrays(1, &vao_);
+    glBindVertexArray(vao_);
+
+    glGenBuffers(1, &vbo_);
+    glBindBuffer(GL_ARRAY_BUFFER, vbo_);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
+
+    // Position attribute (location = 0)
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(0);
+
+    // Texcoord attribute (location = 1)
+    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)(3 * sizeof(float)));
+    glEnableVertexAttribArray(1);
+    glGenTextures(1, &textureY_);
+    glGenTextures(1, &textureU_);
+    glGenTextures(1, &textureV_);
+
+    initialized_ = true;
+}
+
+void GLVideoRenderer::updateTextures(AVFrame* frame) {
+    if (!frame || !initialized_) return;
+    
+    glBindTexture(GL_TEXTURE_2D, textureY_);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, frame->width, frame->height, 0, GL_RED,
+        GL_UNSIGNED_BYTE, frame->data[0]);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    
+    glBindTexture(GL_TEXTURE_2D, textureU_);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, frame->width / 2, frame->height / 2, 0, GL_RED,
+        GL_UNSIGNED_BYTE, frame->data[1]);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    
+    glBindTexture(GL_TEXTURE_2D, textureV_);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, frame->width / 2, frame->height / 2, 0, GL_RED,
+        GL_UNSIGNED_BYTE, frame->data[2]);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);   
+}
+
+void GLVideoRenderer::render() {
+    if (!initialized_) return;
+    
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+    
+    glUseProgram(shaderProgram_);
+    glBindVertexArray(vao_);
+    
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, textureY_);
+    glUniform1i(glGetUniformLocation(shaderProgram_, "yTexture"), 0);
+    
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, textureU_);
+    glUniform1i(glGetUniformLocation(shaderProgram_, "uTexture"), 1);
+    
+    glActiveTexture(GL_TEXTURE2);
+    glBindTexture(GL_TEXTURE_2D, textureV_);
+    glUniform1i(glGetUniformLocation(shaderProgram_, "vTexture"), 2);
+    
+    glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
+    
+} 
+
 VideoRenderer::VideoRenderer(QQuickItem *parent)
     : QQuickFramebufferObject(parent)
     , decoder_(nullptr)
+    , glRenderer_(nullptr)
 {
     setMirrorVertically(true); // Fix OpenGL vertical coordinate
     setTextureFollowsItemSize(true); // Make texture follow item size
     setFlag(QQuickItem::ItemHasContents, true); // Ensure item has renderable content
     decoder_ = new VideoDecoder(this);
+    glRenderer_ = new GLVideoRenderer();
     
     connect(decoder_, &VideoDecoder::frameReady, this, [this](AVFrame* frame) {
+        Q_UNUSED(frame);
         update(); // Request re-render
     });
     connect(decoder_, &VideoDecoder::errorOccurred, this, [](const QString& e){ qWarning() << e; });
@@ -46,7 +199,7 @@ VideoRenderer::VideoRenderer(QQuickItem *parent)
 }
 
 VideoRenderer::~VideoRenderer() {
-    // decoder_ will be deleted by Qt parent-child relationship
+    delete glRenderer_;
 }
 
 QString VideoRenderer::source() const {
@@ -68,163 +221,47 @@ QQuickFramebufferObject::Renderer *VideoRenderer::createRenderer() const {
     return new VideoRendererInternal();
 }
 
+void VideoRenderer::renderToFbo(QOpenGLFramebufferObject* fbo) {
+    Q_UNUSED(fbo);
+    if (glRenderer_) {
+        glRenderer_->render();
+    }
+}
+
 // ========== VideoRendererInternal implementation ==========
 
 VideoRendererInternal::VideoRendererInternal()
-    : textureY_(0)
-    , textureU_(0)
-    , textureV_(0)
-    , shaderProgram_(0)
-    , vertexArray_(0)
-    , decoder_(nullptr)
+    : item_(nullptr)
 {
-    initializeOpenGLFunctions();
-    initShaders();
 }
 
 VideoRendererInternal::~VideoRendererInternal() {
-    if (textureY_) glDeleteTextures(1, &textureY_);
-    if (textureU_) glDeleteTextures(1, &textureU_);
-    if (textureV_) glDeleteTextures(1, &textureV_);
-    if (shaderProgram_) glDeleteProgram(shaderProgram_);
-    if (vertexArray_) glDeleteVertexArrays(1, &vertexArray_);
-}
-
-void VideoRendererInternal::initShaders() {
-    // Load shaders from resources
-    QString vertexShaderSource = loadShader(":/shaders/vertex.vert");
-    QString fragmentShaderSource = loadShader(":/shaders/fragment.frag");
-    
-    if (vertexShaderSource.isEmpty() || fragmentShaderSource.isEmpty()) {
-        qCritical() << "Failed to load shader files";
-        return;
-    }
-    
-    // Compile shaders
-    GLuint vertexShader = glCreateShader(GL_VERTEX_SHADER);
-    QByteArray vertexBytes = vertexShaderSource.toUtf8();
-    const char* vertexData = vertexBytes.constData();
-    glShaderSource(vertexShader, 1, &vertexData, nullptr);
-    glCompileShader(vertexShader);
-    
-    GLuint fragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
-    QByteArray fragmentBytes = fragmentShaderSource.toUtf8();
-    const char* fragmentData = fragmentBytes.constData();
-    glShaderSource(fragmentShader, 1, &fragmentData, nullptr);
-    glCompileShader(fragmentShader);
-    
-    // Link program
-    shaderProgram_ = glCreateProgram();
-    glAttachShader(shaderProgram_, vertexShader);
-    glAttachShader(shaderProgram_, fragmentShader);
-    glLinkProgram(shaderProgram_);
-    
-    // Delete shader objects (no longer needed after link)
-    glDeleteShader(vertexShader);
-    glDeleteShader(fragmentShader);
-    
-    // Create VAO and VBO
-    glGenVertexArrays(1, &vertexArray_);
-    GLuint VBO;
-    glGenBuffers(1, &VBO);
-    
-    // Vertex data (position + texcoord)
-    float vertices[] = {
-        // position    // texcoord
-         1.0f,  1.0f, 0.0f,  1.0f, 0.0f,   // right-top
-         1.0f, -1.0f, 0.0f,  1.0f, 1.0f,   // right-bottom
-        -1.0f, -1.0f, 0.0f,  0.0f, 1.0f,   // left-bottom
-        -1.0f,  1.0f, 0.0f,  0.0f, 0.0f    // left-top
-    };
-    
-    glBindVertexArray(vertexArray_);
-    glBindBuffer(GL_ARRAY_BUFFER, VBO);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
-    
-    // Position attribute
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)0);
-    glEnableVertexAttribArray(0);
-    
-    // Texcoord attribute
-    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)(3 * sizeof(float)));
-    glEnableVertexAttribArray(1);
-    
-    // Create YUV textures
-    glGenTextures(1, &textureY_);
-    glGenTextures(1, &textureU_);
-    glGenTextures(1, &textureV_);
-}
-
-void VideoRendererInternal::updateTextures(AVFrame* frame) {
-    if (!frame) return;
-    
-    // Update Y texture
-    glBindTexture(GL_TEXTURE_2D, textureY_);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, frame->width, frame->height, 0, GL_RED, GL_UNSIGNED_BYTE, frame->data[0]);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    
-    // Update U texture
-    glBindTexture(GL_TEXTURE_2D, textureU_);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, frame->width/2, frame->height/2, 0, GL_RED, GL_UNSIGNED_BYTE, frame->data[1]);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    
-    // Update V texture
-    glBindTexture(GL_TEXTURE_2D, textureV_);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, frame->width/2, frame->height/2, 0, GL_RED, GL_UNSIGNED_BYTE, frame->data[2]);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 }
 
 void VideoRendererInternal::render() {
-    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-    glClear(GL_COLOR_BUFFER_BIT);
-    
-    if (!decoder_ || !decoder_->hasVideo()) {
-        return;
-    }
-    
-    glUseProgram(shaderProgram_);
-    glBindVertexArray(vertexArray_);
-    
-    // Bind texture units
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, textureY_);
-    glUniform1i(glGetUniformLocation(shaderProgram_, "yTexture"), 0);
-    
-    glActiveTexture(GL_TEXTURE1);
-    glBindTexture(GL_TEXTURE_2D, textureU_);
-    glUniform1i(glGetUniformLocation(shaderProgram_, "uTexture"), 1);
-    
-    glActiveTexture(GL_TEXTURE2);
-    glBindTexture(GL_TEXTURE_2D, textureV_);
-    glUniform1i(glGetUniformLocation(shaderProgram_, "vTexture"), 2);
-    
-    // Draw quad
-    glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
+    if (!item_) return;
+    item_->renderToFbo(framebufferObject());
 }
 
 void VideoRendererInternal::synchronize(QQuickFramebufferObject *item) {
-    VideoRenderer* renderer = static_cast<VideoRenderer*>(item);
-    decoder_ = renderer->decoder_;
+    item_ = static_cast<VideoRenderer*>(item);
     
-    // Initialize shader if needed
-    if (!shaderProgram_) {
-        initShaders();
+    if (item_->glRenderer_) {
+        item_->glRenderer_->initialize();
     }
     
-    // Fetch latest frame and update textures
-    if (decoder_ && decoder_->hasVideo()) {
-        AVFrame* frame = decoder_->decodeFrame();
+    VideoDecoder* decoder = item_->decoder_;
+    if (decoder && decoder->hasVideo() && !decoder->isEof() && item_->glRenderer_) {
+        AVFrame* frame = decoder->decodeFrame();
         if (frame) {
-            updateTextures(frame);
+            item_->glRenderer_->updateTextures(frame);
         }
     }
 
-    // Request next frame
-    if (item)
+    // Only request next frame if not EOF
+    if (item && decoder && !decoder->isEof()) {
         item->update();
+    }
 }
 
 QOpenGLFramebufferObject *VideoRendererInternal::createFramebufferObject(const QSize &size) {

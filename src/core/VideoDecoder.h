@@ -3,7 +3,7 @@
 
 #include <QObject>
 #include <QString>
-#include <memory>
+#include <QMutex>
 
 extern "C" {
 #include <libavformat/avformat.h>
@@ -23,6 +23,7 @@ public:
     QSize videoSize() const;
     AVFrame* decodeFrame();
     void seekTo(qint64 position);
+    bool isEof() const;
 
 signals:
     void frameReady(AVFrame* frame);
@@ -38,6 +39,8 @@ private:
     AVFrame* frame_;
     AVFrame* rgb_frame_;
     uint8_t* rgb_buffer_;
+    bool eof_;
+    mutable QMutex mutex_;  // Protect cross-thread access
 };
 
 #endif // VIDEODECODER_H

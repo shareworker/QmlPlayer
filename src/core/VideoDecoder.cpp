@@ -22,6 +22,7 @@ VideoDecoder::VideoDecoder(QObject *parent)
     , frame_(nullptr)
     , rgb_frame_(nullptr)
     , rgb_buffer_(nullptr)
+    , eof_(false)
 {
     // Initialize FFmpeg (once globally)
     static bool ffmpeg_initialized = false;
@@ -41,6 +42,8 @@ VideoDecoder::~VideoDecoder() {
 }
 
 void VideoDecoder::cleanup() {
+    QMutexLocker locker(&mutex_);
+    
     if (format_context_) {
         avformat_close_input(&format_context_);
         format_context_ = nullptr;
@@ -72,6 +75,7 @@ void VideoDecoder::cleanup() {
     }
     
     video_stream_index_ = -1;
+    eof_ = false;
 }
 
 bool VideoDecoder::loadFile(const QString& filename) {
@@ -125,11 +129,14 @@ bool VideoDecoder::loadFile(const QString& filename) {
         emit errorOccurred(QString::fromLatin1("Cannot open decoder: %1").arg(QString::fromLatin1(buf)));
         return false;
     }
+    eof_ = false;  // Reset EOF on new file
     return true;
 }
 
 AVFrame* VideoDecoder::decodeFrame() {
-    if (!format_context_ || !codec_context_) {
+    QMutexLocker locker(&mutex_);
+    
+    if (!format_context_ || !codec_context_ || eof_) {
         return nullptr;
     }
     
@@ -140,6 +147,7 @@ AVFrame* VideoDecoder::decodeFrame() {
 
             if (avcodec_receive_frame(codec_context_, frame_) == 0) {
                 av_packet_unref(packet);
+                av_packet_free(&packet);  // Fix memory leak
                 return frame_;
             }
         }
@@ -147,11 +155,17 @@ AVFrame* VideoDecoder::decodeFrame() {
     }
 
     av_packet_free(&packet);
+    eof_ = true;  // Mark EOF when no more frames
     return nullptr;
 }
 
 bool VideoDecoder::hasVideo() const {
     return video_stream_index_ != -1 && codec_context_ != nullptr;
+}
+
+bool VideoDecoder::isEof() const {
+    QMutexLocker locker(&mutex_);
+    return eof_;
 }
 
 QSize VideoDecoder::videoSize() const {
@@ -162,6 +176,8 @@ QSize VideoDecoder::videoSize() const {
 }
 
 void VideoDecoder::seekTo(qint64 position) {
+    QMutexLocker locker(&mutex_);
+    
     if (!hasVideo()) {
         return;
     }
@@ -174,4 +190,5 @@ void VideoDecoder::seekTo(qint64 position) {
 
     // Flush decoder buffers
     avcodec_flush_buffers(codec_context_);
+    eof_ = false;  // Reset EOF after seek
 }
