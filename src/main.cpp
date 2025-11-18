@@ -7,17 +7,15 @@
 #include "core/VideoRenderer.h"
 
 int main(int argc, char *argv[]) {
-    // Configure OpenGL surface format
+    // Configure OpenGL surface format (no explicit version/profile)
     QSurfaceFormat format;
-    format.setVersion(3, 3);
-    format.setProfile(QSurfaceFormat::CoreProfile);
     format.setDepthBufferSize(24);
     format.setStencilBufferSize(8);
     QSurfaceFormat::setDefaultFormat(format);
-    
+
     // Force the OpenGL scene graph backend
     QQuickWindow::setGraphicsApi(QSGRendererInterface::OpenGL);
-    
+
     QGuiApplication app(argc, argv);
     qmlRegisterType<VideoRenderer>("VideoPlayer", 1, 0, "VideoRenderer");
 

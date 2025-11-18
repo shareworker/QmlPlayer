@@ -4,7 +4,7 @@
 #include <QQuickFramebufferObject>
 #include <QOpenGLFramebufferObject>
 #include <QOpenGLShaderProgram>
-#include <QOpenGLFunctions_3_3_Core>
+#include <QOpenGLFunctions>
 #include <QOpenGLTexture>
 #include <QDebug>
 #include <QObject>
@@ -27,7 +27,7 @@ static QString loadShader(const QString& path) {
     return file.readAll();
 }
 
-class GLVideoRenderer : protected QOpenGLFunctions_3_3_Core {
+class GLVideoRenderer : protected QOpenGLFunctions {
 public:
     GLVideoRenderer();
     ~GLVideoRenderer();
@@ -43,7 +43,6 @@ private:
     GLuint textureV_;
     GLuint shaderProgram_;
     GLuint vbo_;
-    GLuint vao_;
 };
 
 GLVideoRenderer::GLVideoRenderer()
@@ -53,7 +52,6 @@ GLVideoRenderer::GLVideoRenderer()
     , textureV_(0)
     , shaderProgram_(0)
     , vbo_(0)
-    , vao_(0)
 {
 }
 
@@ -63,7 +61,6 @@ GLVideoRenderer::~GLVideoRenderer() {
     if (textureV_) glDeleteTextures(1, &textureV_);
     if (shaderProgram_) glDeleteProgram(shaderProgram_);
     if (vbo_) glDeleteBuffers(1, &vbo_);
-    if (vao_) glDeleteVertexArrays(1, &vao_);
 }
 
 void GLVideoRenderer::initialize() {
@@ -100,27 +97,16 @@ void GLVideoRenderer::initialize() {
     glDeleteShader(fragmentShader);
 
     float vertices[] = {
-        1.0f, 1.0f, 0.0f, 1.0f, 0.0f,
+        1.0f,  1.0f, 0.0f, 1.0f, 0.0f,
         1.0f, -1.0f, 0.0f, 1.0f, 1.0f,
-        -1.0f, -1.0f, 0.0f, 0.0f, 1.0f,
-        -1.0f, 1.0f, 0.0f, 0.0f, 0.0f,
+       -1.0f, -1.0f, 0.0f, 0.0f, 1.0f,
+       -1.0f,  1.0f, 0.0f, 0.0f, 0.0f,
     };
 
-    // Create VAO and VBO, and set up vertex attributes once
-    glGenVertexArrays(1, &vao_);
-    glBindVertexArray(vao_);
-
+    // Create a single VBO for the fullscreen quad
     glGenBuffers(1, &vbo_);
     glBindBuffer(GL_ARRAY_BUFFER, vbo_);
     glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
-
-    // Position attribute (location = 0)
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)0);
-    glEnableVertexAttribArray(0);
-
-    // Texcoord attribute (location = 1)
-    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)(3 * sizeof(float)));
-    glEnableVertexAttribArray(1);
     glGenTextures(1, &textureY_);
     glGenTextures(1, &textureU_);
     glGenTextures(1, &textureV_);
@@ -157,7 +143,15 @@ void GLVideoRenderer::render() {
     glClear(GL_COLOR_BUFFER_BIT);
     
     glUseProgram(shaderProgram_);
-    glBindVertexArray(vao_);
+    glBindBuffer(GL_ARRAY_BUFFER, vbo_);
+
+    // Position attribute (location = 0)
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(0);
+
+    // Texcoord attribute (location = 1)
+    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)(3 * sizeof(float)));
+    glEnableVertexAttribArray(1);
     
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, textureY_);
