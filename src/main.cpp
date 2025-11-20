@@ -16,6 +16,9 @@ int main(int argc, char *argv[]) {
     // Force the OpenGL scene graph backend
     QQuickWindow::setGraphicsApi(QSGRendererInterface::OpenGL);
 
+    // Use a QML-based style so control customization (background/handle) is supported
+    qputenv("QT_QUICK_CONTROLS_STYLE", "Basic");
+
     QGuiApplication app(argc, argv);
     qmlRegisterType<VideoRenderer>("VideoPlayer", 1, 0, "VideoRenderer");
 

@@ -185,6 +185,21 @@ VideoRenderer::VideoRenderer(QQuickItem *parent)
         update(); // Request re-render
     });
     connect(decoder_, &VideoDecoder::errorOccurred, this, [](const QString& e){ qWarning() << e; });
+
+    // Forward decoder state/duration/position to QML-facing signals
+    connect(decoder_, &VideoDecoder::stateChanged, this, [this](VideoDecoder::PlaybackState s) {
+        emit stateChanged(static_cast<int>(s));
+        // When entering Playing state, kick the render loop once
+        if (s == VideoDecoder::Playing) {
+            update();
+        }
+    });
+    connect(decoder_, &VideoDecoder::durationChanged, this, [this](qint64 d) {
+        emit durationChanged(d);
+    });
+    connect(decoder_, &VideoDecoder::positionChanged, this, [this](qint64 p) {
+        emit positionChanged(p);
+    });
     
     // Queue an initial update to start the render loop
     QMetaObject::invokeMethod(this, [this]() {
@@ -222,6 +237,43 @@ void VideoRenderer::renderToFbo(QOpenGLFramebufferObject* fbo) {
     }
 }
 
+int VideoRenderer::state() const {
+    if (!decoder_)
+        return 0;
+    return static_cast<int>(decoder_->state());
+}
+
+qint64 VideoRenderer::duration() const {
+    return decoder_ ? decoder_->duration() : 0;
+}
+
+qint64 VideoRenderer::position() const {
+    return decoder_ ? decoder_->position() : 0;
+}
+
+void VideoRenderer::play() {
+    if (decoder_)
+        decoder_->play();
+}
+
+void VideoRenderer::pause() {
+    if (decoder_)
+        decoder_->pause();
+}
+
+void VideoRenderer::stop() {
+    if (decoder_)
+        decoder_->stop();
+}
+
+void VideoRenderer::seek(qint64 position) {
+    if (!decoder_)
+        return;
+    
+    decoder_->seek(position);
+    update();  // Request QML repaint
+}
+
 // ========== VideoRendererInternal implementation ==========
 
 VideoRendererInternal::VideoRendererInternal()
@@ -252,8 +304,8 @@ void VideoRendererInternal::synchronize(QQuickFramebufferObject *item) {
         }
     }
 
-    // Only request next frame if not EOF
-    if (item && decoder && !decoder->isEof()) {
+    // Only request next frame while playing and not EOF
+    if (item && decoder && !decoder->isEof() && decoder->state() == VideoDecoder::Playing) {
         item->update();
     }
 }

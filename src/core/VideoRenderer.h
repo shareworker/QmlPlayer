@@ -16,6 +16,9 @@ class GLVideoRenderer;
 class VideoRenderer : public QQuickFramebufferObject {
     Q_OBJECT
     Q_PROPERTY(QString source READ source WRITE setSource NOTIFY sourceChanged)
+    Q_PROPERTY(int state READ state NOTIFY stateChanged)
+    Q_PROPERTY(qint64 duration READ duration NOTIFY durationChanged)
+    Q_PROPERTY(qint64 position READ position NOTIFY positionChanged)
 
 public:
     explicit VideoRenderer(QQuickItem *parent = nullptr);
@@ -27,8 +30,20 @@ public:
     Renderer *createRenderer() const override;
     void renderToFbo(QOpenGLFramebufferObject* fbo);
 
+    int state() const;
+    qint64 duration() const;
+    qint64 position() const;
+
+    Q_INVOKABLE void play();
+    Q_INVOKABLE void pause();
+    Q_INVOKABLE void stop();
+    Q_INVOKABLE void seek(qint64 position);
+
 signals:
     void sourceChanged();
+    void stateChanged(int state);
+    void durationChanged(qint64 duration);
+    void positionChanged(qint64 position);
 
 private:
     QString source_;

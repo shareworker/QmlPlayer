@@ -23,7 +23,11 @@ VideoDecoder::VideoDecoder(QObject *parent)
     , rgb_frame_(nullptr)
     , rgb_buffer_(nullptr)
     , eof_(false)
+    , state_(Stopped)
+    , duration_(0)
+    , position_(0)
 {
+    pending_seek_ms_.store(-1, std::memory_order_relaxed);
     // Initialize FFmpeg (once globally)
     static bool ffmpeg_initialized = false;
     if (!ffmpeg_initialized) {
@@ -76,6 +80,17 @@ void VideoDecoder::cleanup() {
     
     video_stream_index_ = -1;
     eof_ = false;
+    duration_ = 0;
+    position_ = 0;
+    pending_seek_ms_.store(-1, std::memory_order_relaxed);
+    setState(Stopped);
+}
+
+void VideoDecoder::setState(PlaybackState state) {
+    if (state_ != state) {
+        state_ = state;
+        emit stateChanged(state_);
+    }
 }
 
 bool VideoDecoder::loadFile(const QString& filename) {
@@ -129,14 +144,48 @@ bool VideoDecoder::loadFile(const QString& filename) {
         emit errorOccurred(QString::fromLatin1("Cannot open decoder: %1").arg(QString::fromLatin1(buf)));
         return false;
     }
+
+    // Compute duration in milliseconds if available
+    if (format_context_->duration != AV_NOPTS_VALUE) {
+        duration_ = format_context_->duration * 1000 / AV_TIME_BASE;
+        emit durationChanged(duration_);
+    } else {
+        duration_ = 0;
+        emit durationChanged(duration_);
+    }
+
     eof_ = false;  // Reset EOF on new file
+    setState(Playing);
     return true;
 }
 
 AVFrame* VideoDecoder::decodeFrame() {
     QMutexLocker locker(&mutex_);
     
-    if (!format_context_ || !codec_context_ || eof_) {
+    if (!format_context_ || !codec_context_) {
+        return nullptr;
+    }
+    
+    // Apply any pending seek request (from UI thread) on this decoder thread
+    qint64 pending = pending_seek_ms_.exchange(-1, std::memory_order_relaxed);
+    if (pending >= 0) {
+        int64_t target_pts = pending * AV_TIME_BASE / 1000; // ms to AV_TIME_BASE
+        if (av_seek_frame(format_context_, -1, target_pts, AVSEEK_FLAG_BACKWARD) < 0) {
+            emit errorOccurred("Seek failed");
+        } else {
+            avcodec_flush_buffers(codec_context_);
+            eof_ = false;
+            position_ = pending;
+            emit positionChanged(position_);
+        }
+    }
+
+    if (eof_) {
+        return nullptr;
+    }
+
+    // Only decode while playing
+    if (state_ != Playing) {
         return nullptr;
     }
     
@@ -146,6 +195,14 @@ AVFrame* VideoDecoder::decodeFrame() {
             avcodec_send_packet(codec_context_, packet);
 
             if (avcodec_receive_frame(codec_context_, frame_) == 0) {
+                if (frame_->pts != AV_NOPTS_VALUE) {
+                    AVRational tb = format_context_->streams[video_stream_index_]->time_base;
+                    qint64 pts_ms = frame_->pts * 1000 * tb.num / tb.den;
+                    if (position_ != pts_ms) {
+                        position_ = pts_ms;
+                        emit positionChanged(position_);
+                    }
+                }
                 av_packet_unref(packet);
                 av_packet_free(&packet);  // Fix memory leak
                 return frame_;
@@ -156,6 +213,7 @@ AVFrame* VideoDecoder::decodeFrame() {
 
     av_packet_free(&packet);
     eof_ = true;  // Mark EOF when no more frames
+    setState(Stopped);
     return nullptr;
 }
 
@@ -164,7 +222,6 @@ bool VideoDecoder::hasVideo() const {
 }
 
 bool VideoDecoder::isEof() const {
-    QMutexLocker locker(&mutex_);
     return eof_;
 }
 
@@ -175,20 +232,40 @@ QSize VideoDecoder::videoSize() const {
     return QSize();
 }
 
-void VideoDecoder::seekTo(qint64 position) {
-    QMutexLocker locker(&mutex_);
-    
-    if (!hasVideo()) {
-        return;
-    }
+void VideoDecoder::seek(qint64 position) {
+    // Record pending seek in milliseconds; actual FFmpeg seek will be
+    // performed on the decoder/render thread inside decodeFrame().
+    pending_seek_ms_.store(position, std::memory_order_relaxed);
+}
 
-    int64_t target_pts = position * AV_TIME_BASE / 1000; // ms to AV_TIME_BASE
-    if (av_seek_frame(format_context_, -1, target_pts, AVSEEK_FLAG_BACKWARD) < 0) {
-        emit errorOccurred("Seek failed");
-        return;
-    }
+VideoDecoder::PlaybackState VideoDecoder::state() const {
+    return state_;
+}
 
-    // Flush decoder buffers
-    avcodec_flush_buffers(codec_context_);
-    eof_ = false;  // Reset EOF after seek
+qint64 VideoDecoder::duration() const {
+    return duration_;
+}
+
+qint64 VideoDecoder::position() const {
+    return position_;
+}
+
+
+void VideoDecoder::play() {
+    if (state_ != Playing) {
+        setState(Playing);
+    }
+}
+
+void VideoDecoder::pause() {
+    if (state_ == Playing) {
+        setState(Paused);
+    }
+}
+
+void VideoDecoder::stop() {
+    if (state_ != Stopped) {
+        setState(Stopped);
+        seek(0);
+    }
 }
