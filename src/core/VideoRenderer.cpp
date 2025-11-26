@@ -173,6 +173,8 @@ VideoRenderer::VideoRenderer(QQuickItem *parent)
     : QQuickFramebufferObject(parent)
     , decoder_(nullptr)
     , glRenderer_(nullptr)
+    , volume_(0.8)
+    , muted_(false)
 {
     setMirrorVertically(true); // Fix OpenGL vertical coordinate
     setTextureFollowsItemSize(true); // Make texture follow item size
@@ -199,6 +201,9 @@ VideoRenderer::VideoRenderer(QQuickItem *parent)
     });
     connect(decoder_, &VideoDecoder::positionChanged, this, [this](qint64 p) {
         emit positionChanged(p);
+    });
+    connect(decoder_, &VideoDecoder::metadataChanged, this, [this]() {
+        emit metadataChanged();
     });
     
     // Queue an initial update to start the render loop
@@ -251,6 +256,28 @@ qint64 VideoRenderer::position() const {
     return decoder_ ? decoder_->position() : 0;
 }
 
+qreal VideoRenderer::volume() const {
+    return volume_;
+}
+
+void VideoRenderer::setVolume(qreal volume) {
+    if (qFuzzyCompare(volume_, volume)) return;
+    volume_ = qBound(0.0, volume, 1.0);
+    emit volumeChanged(volume_);
+    // TODO: Apply volume to audio output when audio is implemented
+}
+
+bool VideoRenderer::muted() const {
+    return muted_;
+}
+
+void VideoRenderer::setMuted(bool muted) {
+    if (muted_ == muted) return;
+    muted_ = muted;
+    emit mutedChanged(muted_);
+    // TODO: Apply mute to audio output when audio is implemented
+}
+
 void VideoRenderer::play() {
     if (decoder_)
         decoder_->play();
@@ -272,6 +299,22 @@ void VideoRenderer::seek(qint64 position) {
     
     decoder_->seek(position);
     update();  // Request QML repaint
+}
+
+int VideoRenderer::videoWidth() const {
+    return decoder_ ? decoder_->videoWidth() : 0;
+}
+
+int VideoRenderer::videoHeight() const {
+    return decoder_ ? decoder_->videoHeight() : 0;
+}
+
+QString VideoRenderer::videoCodec() const {
+    return decoder_ ? decoder_->videoCodec() : QString();
+}
+
+qint64 VideoRenderer::bitrate() const {
+    return decoder_ ? decoder_->bitrate() : 0;
 }
 
 // ========== VideoRendererInternal implementation ==========

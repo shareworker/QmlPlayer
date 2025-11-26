@@ -17,7 +17,7 @@ set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
 # Find Qt6 components
-find_package(Qt6 REQUIRED COMPONENTS Core Quick OpenGL Qml)
+find_package(Qt6 REQUIRED COMPONENTS Core Quick OpenGL Qml QuickControls2)
 
 # Find FFmpeg headers and libraries using configured install directory
 find_path(AVFORMAT_INCLUDE_DIR 
@@ -91,6 +91,8 @@ add_executable(${PROJECT_NAME}
     src/main.cpp
     src/core/VideoDecoder.cpp
     src/core/VideoRenderer.cpp
+    src/core/ConfigManager.cpp
+    src/core/ConfigBridge.cpp
     src/core/VideoRenderer.h
     src/core/VideoDecoder.h
     resources.qrc
@@ -106,5 +108,6 @@ target_link_libraries(${PROJECT_NAME}
     Qt6::Quick
     Qt6::OpenGL
     Qt6::Qml
+    Qt6::QuickControls2
     ${FFMPEG_LIBRARIES}
 )

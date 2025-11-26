@@ -2,6 +2,11 @@
 <RCC version="1.0">
     <qresource prefix="/qml">
         <file alias="main.qml">src/resources/qml/main.qml</file>
+        <file alias="ProgressBar.qml">src/resources/qml/ProgressBar.qml</file>
+        <file alias="PlayerButton.qml">src/resources/qml/PlayerButton.qml</file>
+        <file alias="ControlPanel.qml">src/resources/qml/ControlPanel.qml</file>
+        <file alias="PlaybackProgressBar.qml">src/resources/qml/PlaybackProgressBar.qml</file>
+        <file alias="UrlInputDialog.qml">src/resources/qml/UrlInputDialog.qml</file>
     </qresource>
     <qresource prefix="/shaders">
         <file alias="vertex.vert">src/resources/shaders/vertex.vert</file>

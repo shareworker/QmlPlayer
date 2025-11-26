@@ -11,13 +11,54 @@ Window {
     height: 600
     title: "QmlPlayer"
 
+    Component.onCompleted: {
+        // Load last opened file from config
+        var lastFile = Config.getValue("lastOpenedFile", "")
+        if (lastFile !== "") {
+            renderer.source = lastFile
+        }
+    }
+
     VideoRenderer {
         id: renderer
         anchors.fill: parent
         anchors.bottomMargin: 80
-        // Set a test file path to verify rendering, or leave empty to start without playback
-        // Example (uncomment and adjust path):
-        // source: "D:/videos/test.mp4"
+    }
+
+    // Drag-and-drop support for video files
+    DropArea {
+        id: dropArea
+        anchors.fill: parent
+
+        onDropped: function(drop) {
+            if (drop.hasUrls && drop.urls.length > 0) {
+                var url = drop.urls[0].toString()
+                // Check if it's a video file by extension
+                var ext = url.substring(url.lastIndexOf('.')).toLowerCase()
+                var videoExtensions = [".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".webm", ".m4v", ".mpg", ".mpeg", ".3gp"]
+                if (videoExtensions.indexOf(ext) !== -1) {
+                    renderer.source = url
+                    Config.setValue("lastOpenedFile", url)
+                    drop.accepted = true
+                }
+            }
+        }
+
+        Rectangle {
+            id: dropOverlay
+            anchors.fill: parent
+            color: "#80000000"
+            visible: dropArea.containsDrag
+            z: 100
+
+            Text {
+                anchors.centerIn: parent
+                text: "Drop video file here"
+                color: "white"
+                font.pixelSize: 24
+                font.bold: true
+            }
+        }
     }
 
     Rectangle {
@@ -49,208 +90,113 @@ Window {
         title: "Choose a media file"
         fileMode: FileDialog.OpenFile
         onAccepted: {
+            var fileUrl = ""
             if (typeof selectedFile !== 'undefined' && selectedFile) {
-                renderer.source = selectedFile.toString();
+                fileUrl = selectedFile.toString()
             } else if (typeof selectedFiles !== 'undefined' && selectedFiles.length > 0) {
-                renderer.source = selectedFiles[0].toString();
+                fileUrl = selectedFiles[0].toString()
+            }
+            if (fileUrl !== "") {
+                renderer.source = fileUrl
+                Config.setValue("lastOpenedFile", fileUrl)
             }
         }
     }
 
+    UrlInputDialog {
+        id: urlDialog
+        // Dialog handles its own centering or positioning
+        onUrlAccepted: function(url) {
+            renderer.source = url
+            Config.setValue("lastOpenedFile", url)
+        }
+    }
+
+    // --- Keyboard Shortcuts (Root Context) ---
+    // Using Shortcut items instead of focusing an Item allows standard event propagation
+    // and automatic enabling/disabling based on context (like dialogs).
+
+    Shortcut {
+        sequence: "Space"
+        enabled: !urlDialog.visible
+        onActivated: {
+            if (renderer.state === 1) renderer.pause()
+            else renderer.play()
+        }
+    }
+
+    Shortcut {
+        sequence: "Left"
+        enabled: !urlDialog.visible
+        onActivated: {
+            if (renderer.duration > 0) {
+                var newPos = Math.max(0, renderer.position - 5000)
+                renderer.seek(newPos)
+            }
+        }
+    }
+
+    Shortcut {
+        sequence: "Right"
+        enabled: !urlDialog.visible
+        onActivated: {
+            if (renderer.duration > 0) {
+                var newPos = Math.min(renderer.duration, renderer.position + 5000)
+                renderer.seek(newPos)
+            }
+        }
+    }
+
+    Shortcut {
+        sequence: "Up"
+        enabled: !urlDialog.visible
+        onActivated: renderer.volume = Math.min(1.0, renderer.volume + 0.05)
+    }
+
+    Shortcut {
+        sequence: "Down"
+        enabled: !urlDialog.visible
+        onActivated: renderer.volume = Math.max(0.0, renderer.volume - 0.05)
+    }
+
+    Shortcut {
+        sequence: "F"
+        enabled: !urlDialog.visible
+        onActivated: root.visibility = root.visibility === Window.FullScreen ? Window.Windowed : Window.FullScreen
+    }
+
+    Shortcut {
+        sequence: "O"
+        enabled: !urlDialog.visible
+        onActivated: fileDialog.open()
+    }
+
+    Shortcut {
+        sequence: "Q"
+        context: Qt.ApplicationShortcut
+        onActivated: Qt.quit()
+    }
+
+    Shortcut {
+        sequence: "M"
+        enabled: !urlDialog.visible
+        onActivated: renderer.muted = !renderer.muted
+    }
+
+    Shortcut {
+        sequence: "U"
+        enabled: !urlDialog.visible
+        onActivated: urlDialog.open()
+    }
+
     // Modern control panel with time display and smooth seeking
-    Rectangle {
+    ControlPanel {
         id: controlPanel
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.bottom: parent.bottom
-        height: 80
-        gradient: Gradient {
-            GradientStop { position: 0.0; color: "#00000000" }
-            GradientStop { position: 0.3; color: "#aa000000" }
-            GradientStop { position: 1.0; color: "#dd000000" }
-        }
-
-        Column {
-            anchors.fill: parent
-            anchors.leftMargin: 12
-            anchors.rightMargin: 12
-            anchors.topMargin: 8
-            anchors.bottomMargin: 10
-            spacing: 6
-
-            // Progress bar with time labels
-            Row {
-                width: parent.width
-                spacing: 8
-
-                Text {
-                    id: currentTime
-                    width: 50
-                    color: "#ffffff"
-                    font.pixelSize: 11
-                    horizontalAlignment: Text.AlignRight
-                    text: formatTime(progress.dragging ? progress.dragValue : renderer.position)
-                }
-
-                Slider {
-                    id: progress
-                    width: parent.width - 120
-                    from: 0
-                    to: renderer.duration > 0 ? renderer.duration : 1
-                    enabled: renderer.duration > 0
-
-                    // Local drag state so we don't fight with decoder updates
-                    property bool dragging: false
-                    property real dragValue: 0
-
-                    value: dragging ? dragValue : renderer.position
-
-                    onPressedChanged: {
-                        dragging = pressed
-                        if (pressed) {
-                            dragValue = value
-                        } else if (renderer.duration > 0) {
-                            renderer.seek(dragValue)
-                        }
-                    }
-
-                    onValueChanged: {
-                        if (dragging) {
-                            dragValue = value
-                        }
-                    }
-
-                    background: Rectangle {
-                        x: progress.leftPadding
-                        y: progress.topPadding + progress.availableHeight / 2 - height / 2
-                        implicitWidth: 200
-                        implicitHeight: 4
-                        width: progress.availableWidth
-                        height: implicitHeight
-                        radius: 2
-                        color: "#404040"
-
-                        Rectangle {
-                            width: progress.visualPosition * parent.width
-                            height: parent.height
-                            color: "#3d7cff"
-                            radius: 2
-                        }
-                    }
-
-                    handle: Rectangle {
-                        x: progress.leftPadding + progress.visualPosition * (progress.availableWidth - width)
-                        y: progress.topPadding + progress.availableHeight / 2 - height / 2
-                        implicitWidth: 14
-                        implicitHeight: 14
-                        radius: 7
-                        color: progress.pressed ? "#5a8fff" : "#3d7cff"
-                        border.color: "#ffffff"
-                        border.width: 2
-                    }
-                }
-
-                Text {
-                    id: totalTime
-                    width: 50
-                    color: "#ffffff"
-                    font.pixelSize: 11
-                    text: formatTime(renderer.duration)
-                }
-            }
-
-            // Control buttons
-            Row {
-                anchors.horizontalCenter: parent.horizontalCenter
-                spacing: 12
-
-                // Stop button
-                Rectangle {
-                    width: 40
-                    height: 40
-                    radius: 20
-                    color: stopBtn.pressed ? "#2d6cdf" : (stopBtn.containsMouse ? "#4a8fff" : "#3d7cff")
-
-                    Rectangle {
-                        anchors.centerIn: parent
-                        width: 14
-                        height: 14
-                        radius: 3
-                        color: "white"
-                    }
-
-                    MouseArea {
-                        id: stopBtn
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: renderer.stop()
-                    }
-                }
-
-                // Play/Pause button
-                Rectangle {
-                    width: 40
-                    height: 40
-                    radius: 20
-                    color: playPauseBtn.pressed ? "#2d6cdf" : (playPauseBtn.containsMouse ? "#4a8fff" : "#3d7cff")
-
-                    // Play icon (triangle)
-                    Canvas {
-                        id: playIcon
-                        anchors.fill: parent
-                        visible: renderer.state !== 1
-                        onPaint: {
-                            var ctx = getContext("2d")
-                            ctx.reset()
-                            ctx.fillStyle = "white"
-                            var w = width
-                            var h = height
-                            ctx.beginPath()
-                            ctx.moveTo(w * 0.38, h * 0.28)
-                            ctx.lineTo(w * 0.38, h * 0.72)
-                            ctx.lineTo(w * 0.70, h * 0.50)
-                            ctx.closePath()
-                            ctx.fill()
-                        }
-                    }
-
-                    // Pause icon (double bars)
-                    Row {
-                        anchors.centerIn: parent
-                        spacing: 4
-                        visible: renderer.state === 1
-
-                        Rectangle {
-                            width: 4
-                            height: 16
-                            radius: 2
-                            color: "white"
-                        }
-                        Rectangle {
-                            width: 4
-                            height: 16
-                            radius: 2
-                            color: "white"
-                        }
-                    }
-
-                    MouseArea {
-                        id: playPauseBtn
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: {
-                            if (renderer.state === 1) {
-                                renderer.pause()
-                            } else {
-                                renderer.play()
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        renderer: renderer
+        formatTimeFunc: formatTime
     }
 
     function formatTime(ms) {

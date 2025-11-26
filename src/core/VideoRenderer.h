@@ -19,6 +19,12 @@ class VideoRenderer : public QQuickFramebufferObject {
     Q_PROPERTY(int state READ state NOTIFY stateChanged)
     Q_PROPERTY(qint64 duration READ duration NOTIFY durationChanged)
     Q_PROPERTY(qint64 position READ position NOTIFY positionChanged)
+    Q_PROPERTY(qreal volume READ volume WRITE setVolume NOTIFY volumeChanged)
+    Q_PROPERTY(bool muted READ muted WRITE setMuted NOTIFY mutedChanged)
+    Q_PROPERTY(int videoWidth READ videoWidth NOTIFY metadataChanged)
+    Q_PROPERTY(int videoHeight READ videoHeight NOTIFY metadataChanged)
+    Q_PROPERTY(QString videoCodec READ videoCodec NOTIFY metadataChanged)
+    Q_PROPERTY(qint64 bitrate READ bitrate NOTIFY metadataChanged)
 
 public:
     explicit VideoRenderer(QQuickItem *parent = nullptr);
@@ -33,6 +39,14 @@ public:
     int state() const;
     qint64 duration() const;
     qint64 position() const;
+    qreal volume() const;
+    void setVolume(qreal volume);
+    bool muted() const;
+    void setMuted(bool muted);
+    int videoWidth() const;
+    int videoHeight() const;
+    QString videoCodec() const;
+    qint64 bitrate() const;
 
     Q_INVOKABLE void play();
     Q_INVOKABLE void pause();
@@ -44,11 +58,16 @@ signals:
     void stateChanged(int state);
     void durationChanged(qint64 duration);
     void positionChanged(qint64 position);
+    void volumeChanged(qreal volume);
+    void mutedChanged(bool muted);
+    void metadataChanged();
 
 private:
     QString source_;
     VideoDecoder* decoder_;
     GLVideoRenderer* glRenderer_;
+    qreal volume_;
+    bool muted_;
     
     friend class VideoRendererInternal;
 };

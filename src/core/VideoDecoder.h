@@ -18,6 +18,10 @@ class VideoDecoder : public QObject
     Q_PROPERTY(PlaybackState state READ state NOTIFY stateChanged)
     Q_PROPERTY(qint64 duration READ duration NOTIFY durationChanged)
     Q_PROPERTY(qint64 position READ position NOTIFY positionChanged)
+    Q_PROPERTY(int videoWidth READ videoWidth NOTIFY metadataChanged)
+    Q_PROPERTY(int videoHeight READ videoHeight NOTIFY metadataChanged)
+    Q_PROPERTY(QString videoCodec READ videoCodec NOTIFY metadataChanged)
+    Q_PROPERTY(qint64 bitrate READ bitrate NOTIFY metadataChanged)
 public:
     enum PlaybackState {
         Stopped,
@@ -37,11 +41,24 @@ public:
     PlaybackState state() const;
     qint64 duration() const;
     qint64 position() const;
+    int videoWidth() const;
+    int videoHeight() const;
+    QString videoCodec() const;
+    qint64 bitrate() const;
+
+    enum SeekMode {
+        FastSeek,      // Seek to nearest keyframe (faster but less accurate)
+        AccurateSeek   // Seek to exact position (slower but accurate)
+    };
+    Q_ENUM(SeekMode)
+    
+    SeekMode seekMode() const;
 
 signals:
     void stateChanged(PlaybackState state);
     void durationChanged(qint64 duration);
     void positionChanged(qint64 position);
+    void metadataChanged();
     void frameReady(AVFrame* frame);
     void errorOccurred(const QString& error);
 
@@ -49,7 +66,8 @@ public slots:
     void play();
     void pause();
     void stop();
-    void seek(qint64 position); 
+    void seek(qint64 position);
+    void setSeekMode(SeekMode mode); 
 
 private:
     void cleanup();
@@ -70,6 +88,14 @@ private:
     qint64 duration_;
     qint64 position_;
     std::atomic<qint64> pending_seek_ms_;
+    
+    // Metadata
+    int videoWidth_;
+    int videoHeight_;
+    QString videoCodec_;
+    qint64 bitrate_;
+    
+    SeekMode seekMode_;
 };
 
 #endif // VIDEODECODER_H
