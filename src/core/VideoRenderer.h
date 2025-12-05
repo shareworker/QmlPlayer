@@ -10,7 +10,10 @@ extern "C" {
 #include <libavformat/avformat.h>
 }
 
+class AVDemuxer;
 class VideoDecoder;
+class AudioDecoder;
+class AudioOutput;
 class GLVideoRenderer;
 
 class VideoRenderer : public QQuickFramebufferObject {
@@ -63,11 +66,18 @@ signals:
     void metadataChanged();
 
 private:
+    void openMedia(const QString& path);
+    void closeMedia();
+
     QString source_;
-    VideoDecoder* decoder_;
-    GLVideoRenderer* glRenderer_;
-    qreal volume_;
-    bool muted_;
+    AVDemuxer* demuxer_ = nullptr;
+    VideoDecoder* decoder_ = nullptr;
+    AudioDecoder* audioDecoder_ = nullptr;
+    AudioOutput* audioOutput_ = nullptr;
+    GLVideoRenderer* glRenderer_ = nullptr;
+    qreal volume_ = 0.8;
+    bool muted_ = false;
+    bool media_open_ = false;
     
     friend class VideoRendererInternal;
 };

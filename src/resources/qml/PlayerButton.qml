@@ -1,24 +1,37 @@
 import QtQuick 2.15
 
-Rectangle {
+Item {
     id: root
-    width: 40
-    height: 40
-    radius: width / 2
+    width: 44
+    height: 44
 
-    property color baseColor: "#3d7cff"
-    property color hoverColor: "#4a8fff"
-    property color pressedColor: "#2d6cdf"
-
-    color: mouse.pressed ? pressedColor : (mouse.containsMouse ? hoverColor : baseColor)
-
+    property color iconColor: "white"
+    
     default property alias content: contentItem.data
-
     signal clicked()
+
+    // Background for touch feedback
+    Rectangle {
+        anchors.centerIn: parent
+        width: Math.min(parent.width, parent.height)
+        height: width
+        radius: width / 2
+        color: "white"
+        opacity: mouse.pressed ? 0.2 : 0
+        visible: mouse.pressed
+        
+        Behavior on opacity { NumberAnimation { duration: 100 } }
+    }
+    
+    // Scale animation on press
+    scale: mouse.pressed ? 0.9 : 1.0
+    Behavior on scale { NumberAnimation { duration: 100; easing.type: Easing.OutQuad } }
 
     Item {
         id: contentItem
-        anchors.fill: parent
+        anchors.centerIn: parent
+        width: 24
+        height: 24
     }
 
     MouseArea {

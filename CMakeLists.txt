@@ -17,7 +17,7 @@ set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
 # Find Qt6 components
-find_package(Qt6 REQUIRED COMPONENTS Core Quick OpenGL Qml QuickControls2)
+find_package(Qt6 REQUIRED COMPONENTS Core Quick OpenGL Qml QuickControls2 Multimedia)
 
 # Find FFmpeg headers and libraries using configured install directory
 find_path(AVFORMAT_INCLUDE_DIR 
@@ -48,8 +48,15 @@ find_path(SWSCALE_INCLUDE_DIR
     DOC "FFmpeg swscale include directory"
 )
 
-if(AVFORMAT_INCLUDE_DIR AND AVCODEC_INCLUDE_DIR AND AVUTIL_INCLUDE_DIR AND SWSCALE_INCLUDE_DIR)
-    set(FFMPEG_INCLUDE_DIRS ${AVFORMAT_INCLUDE_DIR} ${AVCODEC_INCLUDE_DIR} ${AVUTIL_INCLUDE_DIR} ${SWSCALE_INCLUDE_DIR})
+find_path(SWRESAMPLE_INCLUDE_DIR 
+    NAMES libswresample/swresample.h
+    PATHS ${FFMPEG_INSTALL_DIR}
+    PATH_SUFFIXES include include/ffmpeg
+    DOC "FFmpeg swresample include directory"
+)
+
+if(AVFORMAT_INCLUDE_DIR AND AVCODEC_INCLUDE_DIR AND AVUTIL_INCLUDE_DIR AND SWSCALE_INCLUDE_DIR AND SWRESAMPLE_INCLUDE_DIR)
+    set(FFMPEG_INCLUDE_DIRS ${AVFORMAT_INCLUDE_DIR} ${AVCODEC_INCLUDE_DIR} ${AVUTIL_INCLUDE_DIR} ${SWSCALE_INCLUDE_DIR} ${SWRESAMPLE_INCLUDE_DIR})
     
     # Find library files
     find_library(AVFORMAT_LIBRARY 
@@ -79,8 +86,15 @@ if(AVFORMAT_INCLUDE_DIR AND AVCODEC_INCLUDE_DIR AND AVUTIL_INCLUDE_DIR AND SWSCA
         PATH_SUFFIXES lib lib64
         DOC "FFmpeg swscale library"
     )
+
+    find_library(SWRESAMPLE_LIBRARY 
+        NAMES swresample
+        PATHS ${FFMPEG_INSTALL_DIR}
+        PATH_SUFFIXES lib lib64
+        DOC "FFmpeg swresample library"
+    )
     
-    set(FFMPEG_LIBRARIES ${AVFORMAT_LIBRARY} ${AVCODEC_LIBRARY} ${AVUTIL_LIBRARY} ${SWSCALE_LIBRARY})
+    set(FFMPEG_LIBRARIES ${AVFORMAT_LIBRARY} ${AVCODEC_LIBRARY} ${AVUTIL_LIBRARY} ${SWSCALE_LIBRARY} ${SWRESAMPLE_LIBRARY})
     message(STATUS "Found FFmpeg includes: ${FFMPEG_INCLUDE_DIRS}")
     message(STATUS "Found FFmpeg libraries: ${FFMPEG_LIBRARIES}")
 else()
@@ -93,8 +107,14 @@ add_executable(${PROJECT_NAME}
     src/core/VideoRenderer.cpp
     src/core/ConfigManager.cpp
     src/core/ConfigBridge.cpp
+    src/core/AVDemuxer.cpp
+    src/core/AudioDecoder.cpp
+    src/core/AudioOutput.cpp
     src/core/VideoRenderer.h
     src/core/VideoDecoder.h
+    src/core/AVDemuxer.h
+    src/core/AudioDecoder.h
+    src/core/AudioOutput.h
     resources.qrc
 )
 
@@ -109,5 +129,6 @@ target_link_libraries(${PROJECT_NAME}
     Qt6::OpenGL
     Qt6::Qml
     Qt6::QuickControls2
+    Qt6::Multimedia
     ${FFMPEG_LIBRARIES}
 )

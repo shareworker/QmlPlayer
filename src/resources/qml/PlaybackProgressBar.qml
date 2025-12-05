@@ -1,9 +1,9 @@
 import QtQuick 2.15
 import QtQuick.Controls 2.15
 
-Row {
+Item {
     id: root
-    spacing: 8
+    height: 30
 
     // External API
     property real duration: 0        // total duration in ms
@@ -16,87 +16,85 @@ Row {
         if (formatTimeFunc) {
             return formatTimeFunc(ms)
         }
-        if (ms <= 0) return "00:00"
+        if (ms <= 0) return "0:00"
         var totalSeconds = Math.floor(ms / 1000)
         var minutes = Math.floor(totalSeconds / 60)
         var seconds = totalSeconds % 60
-        return (minutes < 10 ? "0" : "") + minutes + ":" + (seconds < 10 ? "0" : "") + seconds
+        return minutes + ":" + (seconds < 10 ? "0" : "") + seconds
     }
 
-    // Current time
-    Text {
-        id: currentTime
-        width: 50
-        color: "#ffffff"
-        font.pixelSize: 11
-        horizontalAlignment: Text.AlignRight
-        text: root.formattedTime(progress.dragging ? progress.dragValue : root.position)
-    }
-
-    // Progress slider with drag-to-seek behavior
-    Slider {
-        id: progress
-        width: parent.width - 120
-        from: 0
-        to: root.duration > 0 ? root.duration : 1
-        enabled: root.duration > 0
-
-        property bool dragging: false
-        property real dragValue: 0
-
-        value: dragging ? dragValue : root.position
-
-        onPressedChanged: {
-            dragging = pressed
-            if (pressed) {
-                dragValue = value
-            } else if (root.duration > 0) {
-                root.seekRequested(dragValue)
-            }
+    // Layout
+    Row {
+        anchors.fill: parent
+        spacing: 10
+        
+        // Current time
+        Text {
+            width: 40
+            anchors.verticalCenter: parent.verticalCenter
+            color: "#8e8e93" // iOS gray
+            font.pixelSize: 12
+            font.family: "SF Pro Text" // Fallback to system
+            horizontalAlignment: Text.AlignRight
+            text: root.formattedTime(progress.pressed ? progress.value : root.position)
         }
 
-        onValueChanged: {
-            if (dragging) {
-                dragValue = value
+        // Slider
+        Slider {
+            id: progress
+            width: parent.width - 100
+            anchors.verticalCenter: parent.verticalCenter
+            from: 0
+            to: root.duration > 0 ? root.duration : 1
+            enabled: root.duration > 0
+            
+            value: pressed ? value : root.position
+
+            onPressedChanged: {
+                if (!pressed && root.duration > 0) {
+                    root.seekRequested(value)
+                }
             }
-        }
 
-        background: Rectangle {
-            x: progress.leftPadding
-            y: progress.topPadding + progress.availableHeight / 2 - height / 2
-            implicitWidth: 200
-            implicitHeight: 4
-            width: progress.availableWidth
-            height: implicitHeight
-            radius: 2
-            color: "#404040"
-
-            Rectangle {
-                width: progress.visualPosition * parent.width
-                height: parent.height
-                color: "#3d7cff"
+            background: Rectangle {
+                x: progress.leftPadding
+                y: progress.topPadding + progress.availableHeight / 2 - height / 2
+                implicitWidth: 200
+                implicitHeight: 4
+                width: progress.availableWidth
+                height: implicitHeight
                 radius: 2
+                color: "#3a3a3c" // Darker track
+
+                Rectangle {
+                    width: progress.visualPosition * parent.width
+                    height: parent.height
+                    color: "#ffffff" // White progress
+                    radius: 2
+                }
+            }
+
+            handle: Rectangle {
+                x: progress.leftPadding + progress.visualPosition * (progress.availableWidth - width)
+                y: progress.topPadding + progress.availableHeight / 2 - height / 2
+                implicitWidth: progress.pressed ? 16 : 8
+                implicitHeight: progress.pressed ? 16 : 8
+                radius: width / 2
+                color: "#ffffff"
+                
+                Behavior on implicitWidth { NumberAnimation { duration: 150 } }
+                Behavior on implicitHeight { NumberAnimation { duration: 150 } }
             }
         }
 
-        handle: Rectangle {
-            x: progress.leftPadding + progress.visualPosition * (progress.availableWidth - width)
-            y: progress.topPadding + progress.availableHeight / 2 - height / 2
-            implicitWidth: 14
-            implicitHeight: 14
-            radius: 7
-            color: progress.pressed ? "#5a8fff" : "#3d7cff"
-            border.color: "#ffffff"
-            border.width: 2
+        // Total time
+        Text {
+            width: 40
+            anchors.verticalCenter: parent.verticalCenter
+            color: "#8e8e93"
+            font.pixelSize: 12
+            horizontalAlignment: Text.AlignLeft
+            text: root.formattedTime(root.duration)
         }
-    }
-
-    // Total time
-    Text {
-        id: totalTime
-        width: 50
-        color: "#ffffff"
-        font.pixelSize: 11
-        text: root.formattedTime(root.duration)
     }
 }

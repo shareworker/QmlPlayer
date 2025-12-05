@@ -1,6 +1,8 @@
 #include "VideoRenderer.h"
 #include "VideoDecoder.h"
-#include "libavutil/frame.h"
+#include "AVDemuxer.h"
+#include "AudioDecoder.h"
+#include "AudioOutput.h"
 #include <QQuickFramebufferObject>
 #include <QOpenGLFramebufferObject>
 #include <QOpenGLShaderProgram>
@@ -10,11 +12,11 @@
 #include <QObject>
 #include <QString>
 #include <QFile>
+#include <QUrl>
 #include <gl/gl.h>
 
 extern "C" {
-#include <libavformat/avformat.h>
-#include <libavutil/avutil.h>
+#include <libavutil/frame.h>
 }
 
 // Utility: load shader file
@@ -172,14 +174,15 @@ void GLVideoRenderer::render() {
 VideoRenderer::VideoRenderer(QQuickItem *parent)
     : QQuickFramebufferObject(parent)
     , decoder_(nullptr)
-    , glRenderer_(nullptr)
-    , volume_(0.8)
-    , muted_(false)
 {
-    setMirrorVertically(true); // Fix OpenGL vertical coordinate
-    setTextureFollowsItemSize(true); // Make texture follow item size
-    setFlag(QQuickItem::ItemHasContents, true); // Ensure item has renderable content
+    setMirrorVertically(true);
+    setTextureFollowsItemSize(true);
+    setFlag(QQuickItem::ItemHasContents, true);
+    
+    demuxer_ = new AVDemuxer(this);
     decoder_ = new VideoDecoder(this);
+    audioDecoder_ = new AudioDecoder(this);
+    audioOutput_ = new AudioOutput(this);
     glRenderer_ = new GLVideoRenderer();
     
     connect(decoder_, &VideoDecoder::frameReady, this, [this](AVFrame* frame) {
@@ -213,6 +216,7 @@ VideoRenderer::VideoRenderer(QQuickItem *parent)
 }
 
 VideoRenderer::~VideoRenderer() {
+    closeMedia();
     delete glRenderer_;
 }
 
@@ -223,11 +227,72 @@ QString VideoRenderer::source() const {
 void VideoRenderer::setSource(const QString& source) {
     if (source_ != source) {
         source_ = source;
-        if (decoder_) {
-            decoder_->loadFile(source);
-        }
+        openMedia(source);
         emit sourceChanged();
         update();
+    }
+}
+
+void VideoRenderer::openMedia(const QString& path) {
+    closeMedia();
+    
+    QString localPath = path;
+    if (localPath.startsWith(QLatin1String("file:///"), Qt::CaseInsensitive)) {
+        QUrl u(localPath);
+        localPath = u.toLocalFile();
+    } else if (localPath.startsWith(QLatin1String("file:"), Qt::CaseInsensitive)) {
+        QUrl u(localPath);
+        localPath = u.toLocalFile();
+    }
+    
+    if (!demuxer_->open(localPath)) {
+        return;
+    }
+    media_open_ = true;
+    
+    AVFormatContext* ctx = demuxer_->formatContext();
+    
+    // Initialize video decoder
+    if (demuxer_->videoStreamIndex() >= 0) {
+        decoder_->setPacketQueue(&demuxer_->videoQueue());
+        decoder_->open(ctx, demuxer_->videoStreamIndex());
+    }
+    
+    // Initialize audio decoder and output
+    if (demuxer_->audioStreamIndex() >= 0) {
+        audioDecoder_->setPacketQueue(&demuxer_->audioQueue());
+        if (audioDecoder_->open(ctx, demuxer_->audioStreamIndex())) {
+            audioOutput_->setVolume(volume_);
+            audioOutput_->setMuted(muted_);
+        } else {
+            qWarning() << "VideoRenderer: failed to open audio decoder";
+        }
+    }
+    
+    // Start all threads
+    demuxer_->start();
+    if (decoder_->hasVideo()) {
+        decoder_->start();
+        decoder_->play();
+    }
+    if (demuxer_->audioStreamIndex() >= 0) {
+        audioDecoder_->start();
+        audioOutput_->start(audioDecoder_);
+    }
+}
+
+void VideoRenderer::closeMedia() {
+    if (audioOutput_) {
+        audioOutput_->stop();
+    }
+    if (audioDecoder_) {
+        audioDecoder_->close();
+    }
+    if (decoder_) {
+        decoder_->close();
+    }
+    if (demuxer_) {
+        demuxer_->close();
     }
 }
 
@@ -263,8 +328,10 @@ qreal VideoRenderer::volume() const {
 void VideoRenderer::setVolume(qreal volume) {
     if (qFuzzyCompare(volume_, volume)) return;
     volume_ = qBound(0.0, volume, 1.0);
+    if (audioOutput_) {
+        audioOutput_->setVolume(volume_);
+    }
     emit volumeChanged(volume_);
-    // TODO: Apply volume to audio output when audio is implemented
 }
 
 bool VideoRenderer::muted() const {
@@ -274,31 +341,111 @@ bool VideoRenderer::muted() const {
 void VideoRenderer::setMuted(bool muted) {
     if (muted_ == muted) return;
     muted_ = muted;
+    if (audioOutput_) {
+        audioOutput_->setMuted(muted_);
+    }
     emit mutedChanged(muted_);
-    // TODO: Apply mute to audio output when audio is implemented
 }
 
 void VideoRenderer::play() {
-    if (decoder_)
+    if (!media_open_) {
+        if (source_.isEmpty()) return;
+        openMedia(source_);
+    }
+    if (demuxer_ && !demuxer_->isRunning()) {
+        demuxer_->start();
+    }
+    if (decoder_) {
+        if (!decoder_->isRunning()) {
+            decoder_->start();
+        }
         decoder_->play();
+    }
+    if (audioDecoder_) {
+        if (!audioDecoder_->isRunning()) {
+            audioDecoder_->start();
+        }
+    }
+    if (audioOutput_) {
+        if (!audioOutput_->isRunning()) {
+            audioOutput_->start(audioDecoder_);
+        } else {
+            audioOutput_->resume();
+        }
+    }
 }
 
 void VideoRenderer::pause() {
+    if (!media_open_)
+        return;
     if (decoder_)
         decoder_->pause();
+    if (audioOutput_)
+        audioOutput_->pause();
 }
 
 void VideoRenderer::stop() {
-    if (decoder_)
+    if (!media_open_)
+        return;
+    // Stop decoders first
+    if (decoder_) {
         decoder_->stop();
+    }
+    if (audioDecoder_) {
+        audioDecoder_->requestStop();
+        if (audioDecoder_->isRunning()) {
+            audioDecoder_->wait();
+        }
+        audioDecoder_->flush();
+    }
+    if (audioOutput_) {
+        audioOutput_->stop();
+    }
+    // Stop demuxer and clear queues
+    if (demuxer_) {
+        demuxer_->close();
+    }
+    media_open_ = false;
 }
 
 void VideoRenderer::seek(qint64 position) {
-    if (!decoder_)
+    if (!media_open_ || !demuxer_)
         return;
     
-    decoder_->seek(position);
-    update();  // Request QML repaint
+    // Seek demuxer (clears queues internally)
+    demuxer_->seek(position);
+    
+    // Flush decoders
+    if (decoder_) {
+        decoder_->flush();
+    }
+    if (audioDecoder_) {
+        audioDecoder_->flush();
+    }
+
+    // Ensure threads are running and resume playback
+    if (demuxer_ && !demuxer_->isRunning()) {
+        demuxer_->start();
+    }
+    if (decoder_) {
+        if (!decoder_->isRunning()) {
+            decoder_->start();
+        }
+        decoder_->play();
+    }
+    if (audioDecoder_) {
+        if (!audioDecoder_->isRunning()) {
+            audioDecoder_->start();
+        }
+    }
+    if (audioOutput_) {
+        audioOutput_->stop();
+        audioOutput_->start(audioDecoder_);
+        audioOutput_->setVolume(volume_);
+        audioOutput_->setMuted(muted_);
+    }
+
+    update();
 }
 
 int VideoRenderer::videoWidth() const {
@@ -340,15 +487,16 @@ void VideoRendererInternal::synchronize(QQuickFramebufferObject *item) {
     }
     
     VideoDecoder* decoder = item_->decoder_;
-    if (decoder && decoder->hasVideo() && !decoder->isEof() && item_->glRenderer_) {
-        AVFrame* frame = decoder->decodeFrame();
-        if (frame) {
+    if (decoder && decoder->hasVideo() && item_->glRenderer_) {
+        AVFrame* frame = nullptr;
+        if (decoder->frameQueue().tryPop(frame) && frame) {
             item_->glRenderer_->updateTextures(frame);
+            av_frame_free(&frame);
         }
     }
 
-    // Only request next frame while playing and not EOF
-    if (item && decoder && !decoder->isEof() && decoder->state() == VideoDecoder::Playing) {
+    // Request next frame while playing
+    if (decoder && decoder->state() == VideoDecoder::Playing) {
         item->update();
     }
 }

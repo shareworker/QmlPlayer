@@ -22,7 +22,34 @@ Window {
     VideoRenderer {
         id: renderer
         anchors.fill: parent
-        anchors.bottomMargin: 80
+    }
+
+    // Mouse inactivity detector
+    Timer {
+        id: hideTimer
+        interval: 3000
+        onTriggered: controlPanel.opacity = 0.0
+    }
+
+    // Overlay to detect mouse movement over video
+    MouseArea {
+        anchors.fill: parent
+        hoverEnabled: true
+        propagateComposedEvents: true // Let events propagate (though VideoRenderer might not need them)
+        
+        onPositionChanged: {
+            controlPanel.opacity = 1.0
+            hideTimer.restart()
+        }
+        
+        onClicked: {
+            // Toggle play/pause on click
+            if (renderer.state === 1) renderer.pause()
+            else renderer.play()
+            
+            controlPanel.opacity = 1.0
+            hideTimer.restart()
+        }
     }
 
     // Drag-and-drop support for video files
@@ -197,6 +224,24 @@ Window {
         anchors.bottom: parent.bottom
         renderer: renderer
         formatTimeFunc: formatTime
+        
+        // Auto-hide logic
+        opacity: 1.0
+        visible: opacity > 0
+        Behavior on opacity { NumberAnimation { duration: 300 } }
+
+        // Keep visible when hovering control panel
+        MouseArea {
+            anchors.fill: parent
+            hoverEnabled: true
+            propagateComposedEvents: true
+            onEntered: {
+                controlPanel.opacity = 1.0
+                hideTimer.stop()
+            }
+            onExited: hideTimer.restart()
+            onPressed: (mouse) => { mouse.accepted = false }
+        }
     }
 
     function formatTime(ms) {

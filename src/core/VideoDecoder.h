@@ -1,7 +1,7 @@
 #ifndef VIDEODECODER_H
 #define VIDEODECODER_H
 
-#include <QObject>
+#include <QThread>
 #include <QString>
 #include <QMutex>
 #include <atomic>
@@ -12,7 +12,9 @@ extern "C" {
 #include <libswscale/swscale.h>
 }
 
-class VideoDecoder : public QObject
+#include "ThreadSafeQueue.h"
+
+class VideoDecoder : public QThread
 {
     Q_OBJECT
     Q_PROPERTY(PlaybackState state READ state NOTIFY stateChanged)
@@ -32,11 +34,18 @@ public:
     explicit VideoDecoder(QObject *parent = nullptr);
     ~VideoDecoder();
 
-    bool loadFile(const QString& filename);
+    bool open(AVFormatContext* formatCtx, int streamIndex);
+    void close();
+    
+    void setPacketQueue(ThreadSafeQueue<AVPacket*>* queue);
+    
+    ThreadSafeQueue<AVFrame*>& frameQueue() { return frame_queue_; }
+    
     bool hasVideo() const;
     QSize videoSize() const;
-    AVFrame* decodeFrame();
-    bool isEof() const;
+    
+    void flush();
+    void requestStop();
 
     PlaybackState state() const;
     qint64 duration() const;
@@ -46,14 +55,6 @@ public:
     QString videoCodec() const;
     qint64 bitrate() const;
 
-    enum SeekMode {
-        FastSeek,      // Seek to nearest keyframe (faster but less accurate)
-        AccurateSeek   // Seek to exact position (slower but accurate)
-    };
-    Q_ENUM(SeekMode)
-    
-    SeekMode seekMode() const;
-
 signals:
     void stateChanged(PlaybackState state);
     void durationChanged(qint64 duration);
@@ -62,40 +63,35 @@ signals:
     void frameReady(AVFrame* frame);
     void errorOccurred(const QString& error);
 
+protected:
+    void run() override;
+
 public slots:
     void play();
     void pause();
     void stop();
-    void seek(qint64 position);
-    void setSeekMode(SeekMode mode); 
 
 private:
     void cleanup();
     void setState(PlaybackState state);
 
-    AVFormatContext* format_context_;
-    AVCodecContext* codec_context_;
-    AVCodecParameters* codec_params_;
-    struct SwsContext* sws_context_;
-    int video_stream_index_;
-    AVFrame* frame_;
-    AVFrame* rgb_frame_;
-    uint8_t* rgb_buffer_;
-    bool eof_;
-    mutable QMutex mutex_;  // Protect cross-thread access
+    AVCodecContext* codec_context_ = nullptr;
+    ThreadSafeQueue<AVPacket*>* packet_queue_ = nullptr;
+    ThreadSafeQueue<AVFrame*> frame_queue_{30};
+    AVRational time_base_{};
+    std::atomic<bool> stop_requested_{false};
+    std::atomic<bool> flush_requested_{false};
+    mutable QMutex mutex_;
 
-    PlaybackState state_;
-    qint64 duration_;
-    qint64 position_;
-    std::atomic<qint64> pending_seek_ms_;
+    PlaybackState state_ = Stopped;
+    qint64 duration_ = 0;
+    qint64 position_ = 0;
     
     // Metadata
-    int videoWidth_;
-    int videoHeight_;
+    int videoWidth_ = 0;
+    int videoHeight_ = 0;
     QString videoCodec_;
-    qint64 bitrate_;
-    
-    SeekMode seekMode_;
+    qint64 bitrate_ = 0;
 };
 
 #endif // VIDEODECODER_H
